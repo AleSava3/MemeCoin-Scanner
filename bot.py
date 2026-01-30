@@ -17,6 +17,34 @@ current_day = time.strftime("%Y-%m-%d")
 bot = Bot(token=TOKEN)
 
 def anti_rug(pair):
+def score_token(pair):
+    score = 0
+
+    liquidity = pair["liquidity"]["usd"]
+    volume = pair["volume"]["h24"]
+    buys = pair["txns"]["h24"]["buys"]
+    sells = pair["txns"]["h24"]["sells"]
+    fdv = pair["fdv"]
+    age = (time.time()*1000 - pair["pairCreatedAt"]) / 60000
+
+    if liquidity > 200000: score += 30
+    elif liquidity > 100000: score += 20
+    elif liquidity > 50000: score += 10
+
+    if volume > liquidity * 5: score += 25
+    elif volume > liquidity * 2: score += 15
+
+    if buys > sells * 1.5: score += 20
+    elif buys > sells: score += 10
+
+    if fdv < 2_000_000: score += 15
+    elif fdv < 5_000_000: score += 8
+
+    if age > 240: score += 10
+    elif age > 120: score += 5
+
+    return score
+
     try:
         liquidity = pair["liquidity"]["usd"]
         volume = pair["volume"]["h24"]
