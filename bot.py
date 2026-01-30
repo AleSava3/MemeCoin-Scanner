@@ -1,12 +1,15 @@
 import os
 import time
 import requests
-import asyncio
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+)
 
 # =========================
-# CONFIG (Railway Variables)
+# CONFIG
 # =========================
 TOKEN = os.getenv("TOKEN")
 CHAT_ID = int(os.getenv("CHAT_ID"))
@@ -14,11 +17,11 @@ CHAT_ID = int(os.getenv("CHAT_ID"))
 DEXSCREENER_SOL = "https://api.dexscreener.com/latest/dex/pairs/solana"
 
 MAX_ALERTS_PER_DAY = 3
-SCAN_INTERVAL = 1800  # 30 minuti
-REPORT_HOUR = 23  # 23:00 UTC
+SCAN_INTERVAL = 1800  # 30 min
+REPORT_HOUR = 23  # UTC
 
 # =========================
-# STATO GIORNALIERO
+# STATO
 # =========================
 daily_alerts = 0
 daily_scans = 0
@@ -28,30 +31,29 @@ last_report_day = None
 # =========================
 # ANTI RUG
 # =========================
-def anti_rug(pair):
+def anti_rug(p):
     try:
-        if pair["liquidity"]["usd"] < 30000:
+        if p["liquidity"]["usd"] < 30000:
             return False
-        if pair["fdv"] > 10_000_000:
+        if p["fdv"] > 10_000_000:
             return False
-        if pair["txns"]["h24"]["buys"] < pair["txns"]["h24"]["sells"]:
+        if p["txns"]["h24"]["buys"] < p["txns"]["h24"]["sells"]:
             return False
         return True
     except:
         return False
 
 # =========================
-# SCORE 0–100
+# SCORE
 # =========================
 def score_token(p):
     score = 0
-
     liquidity = p["liquidity"]["usd"]
     volume = p["volume"]["h24"]
     buys = p["txns"]["h24"]["buys"]
     sells = p["txns"]["h24"]["sells"]
     fdv = p["fdv"]
-    age_min = (time.time()*1000 - p["pairCreatedAt"]) / 60000
+    age = (time.time()*1000 - p["pairCreatedAt"]) / 60000
 
     if liquidity > 200_000: score += 30
     elif liquidity > 100_000: score += 20
@@ -66,23 +68,25 @@ def score_token(p):
     if fdv < 2_000_000: score += 15
     elif fdv < 5_000_000: score += 8
 
-    if age_min > 240: score += 10
-    elif age_min > 120: score += 5
+    if age > 240: score += 10
+    elif age > 120: score += 5
 
     return score
 
 # =========================
-# SCAN SOLANA
+# SCAN
 # =========================
-async def scan(app):
+async def scan(context: ContextTypes.DEFAULT_TYPE):
     global daily_alerts, daily_scans, top_score
 
     if daily_alerts >= MAX_ALERTS_PER_DAY:
         return
 
     try:
-        data = requests.get(DEXSCREENER_SOL, timeout=10).json()
-        pairs = data.get("pairs", [])
+        r = requests.get(DEXSCREENER_SOL, timeout=10)
+        if r.status_code != 200:
+            return
+        pairs = r.json().get("pairs", [])
     except:
         return
 
@@ -102,8 +106,7 @@ async def scan(app):
         emoji = "🔥" if score >= 75 else "⚠️"
         top_score = max(top_score, score)
 
-        msg = f"""
-{emoji} SOLANA MEME ALERT
+        msg = f"""{emoji} SOLANA MEME ALERT
 
 Token: {p['baseToken']['symbol']}
 Score: {score}/100
@@ -116,14 +119,14 @@ Anti-Rug: OK
 {p['url']}
 """
 
-        await app.bot.send_message(chat_id=CHAT_ID, text=msg)
+        await context.bot.send_message(chat_id=CHAT_ID, text=msg)
         daily_alerts += 1
-        await asyncio.sleep(5)
+        break
 
 # =========================
-# REPORT GIORNALIERO
+# REPORT
 # =========================
-async def daily_report(app):
+async def daily_report(context: ContextTypes.DEFAULT_TYPE):
     global daily_alerts, daily_scans, top_score, last_report_day
 
     today = time.strftime("%Y-%m-%d")
@@ -132,15 +135,14 @@ async def daily_report(app):
     if last_report_day == today or hour != REPORT_HOUR:
         return
 
-    msg = f"""
-📊 REPORT GIORNALIERO SOLANA
+    msg = f"""📊 REPORT GIORNALIERO
 
-Token analizzati: {daily_scans}
-Alert inviati: {daily_alerts}
-Score più alto: {top_score}/100
+Analizzati: {daily_scans}
+Alert: {daily_alerts}
+Top score: {top_score}/100
 """
 
-    await app.bot.send_message(chat_id=CHAT_ID, text=msg)
+    await context.bot.send_message(chat_id=CHAT_ID, text=msg)
 
     daily_alerts = 0
     daily_scans = 0
@@ -148,19 +150,10 @@ Score più alto: {top_score}/100
     last_report_day = today
 
 # =========================
-# LOOP AUTOMATICO
-# =========================
-async def background_loop(app):
-    while True:
-        await scan(app)
-        await daily_report(app)
-        await asyncio.sleep(SCAN_INTERVAL)
-
-# =========================
-# COMANDI TELEGRAM
+# COMANDI
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 Bot Solana attivo e operativo.")
+    await update.message.reply_text("🤖 Bot Solana ONLINE")
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -176,11 +169,8 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("status", status))
 
-    app.job_queue.run_repeating(
-        lambda ctx: asyncio.create_task(background_loop(app)),
-        interval=SCAN_INTERVAL,
-        first=10
-    )
+    app.job_queue.run_repeating(scan, interval=SCAN_INTERVAL, first=15)
+    app.job_queue.run_repeating(daily_report, interval=3600, first=60)
 
     app.run_polling()
 
