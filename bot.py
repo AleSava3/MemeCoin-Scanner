@@ -170,14 +170,19 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 # MAIN
 # =========================
-async def main():
+def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("status", status))
 
-    asyncio.create_task(background_loop(app))
-    await app.run_polling()
+    app.job_queue.run_repeating(
+        lambda ctx: asyncio.create_task(background_loop(app)),
+        interval=SCAN_INTERVAL,
+        first=10
+    )
+
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
